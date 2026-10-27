@@ -1,289 +1,258 @@
-# Presets for Omarchy
+# Workspace Profiles
 
-Launch a saved set of windows from the Omarchy bar, or build a profile that
-sets up several workspaces at once. Presets can also be assigned to numbered
-keyboard shortcuts, and one profile can optionally run when Omarchy starts.
+A **launch-only** fork of kdm's Presets widget for Omarchy. Plugin and IPC identity:
+`abhinav.workspace-profiles`. Title: **Workspace Profiles**.
 
-![Launching a preset, then a two-workspace profile with live progress](docs/opening-them-up.gif)
+A preset is an ordered list of commands. A profile maps explicit global workspace
+numbers to presets. This is **not session restoration**: no saved window geometry,
+monitor topology, scroll position, application state, ownership or unconditional
+window ordering is restored.
 
-## What it does
+## Safety contract
 
-- Saves ordered groups of terminal commands, web apps, and custom commands.
-- Opens windows in Omarchy's scrolling layout and preserves their configured
-  left-to-right order.
-- Maps presets to workspaces in reusable profiles.
-- Shows live progress while a profile launches.
-- Offers nine quick-launch slots for presets and nine for profiles.
-- Can run one explicitly selected default profile after login.
-- Stores everything as readable JSON outside the plugin directory.
+- Existing windows are never closed, killed, moved or adopted as owned. There is
+  no ownership database or closing implementation.
+- Every imported profile is normalized to `closeMode: "keepExisting"` and
+  `default: false`. The UI has no close-mode/default controls. The compatibility
+  activation helper also ignores every legacy close mode permanently.
+- Existing workspace layout is left alone: no forced scrolling layout, workspace
+  rule edits, focus switching, configuration reloads or binding changes.
+- No first-run setup, automatic shortcut installation, boot hook installation,
+  or startup/default activation. Opening/loading the widget only reads state.
+- Presets, profiles, row clicks and IPC all use the same coordinator. While one
+  activation runs, other requests return `busy`; they are **not silently queued**.
+- Commands run sequentially with an explicit Hyprland exec workspace rule
+  (`[workspace N silent]`) and an 8-second window-observation timeout per entry.
+  A failed command/timeout stops the rest of the plan and reports an error.
+  Already-started applications are **not** terminated or rolled back. A timed-out
+  application may still open later: inspect your windows before retrying.
 
-<table>
-<tr>
-<td><img src="docs/preset-list.png" alt="Preset list with tabs, shortcut slots, and quick actions"></td>
-<td><img src="docs/evening-hero.png" alt="A privacy-safe Evening preset arranged across the scrolling layout"></td>
-</tr>
-</table>
+**Commands are executable code, not sandboxed data.** Custom and terminal values
+are intentional Bash commands with your full user permissions. They can change
+files, access the network, close applications themselves, or prompt for privilege.
+The plugin's launch-only policy does not sandbox commands or prevent an app's own
+single-instance/window-placement behavior. Only import commands you have reviewed.
+No personal commands or profiles are bundled.
 
-## Requirements
+## Window matching: opt-in and exact
 
-Presets requires the Quickshell-based Omarchy shell and the `omarchy plugin`
-and `omarchy hook` commands. It has been tested with:
+A window entry can contain an optional `matchClass` string. It is compared exactly
+against Hyprland's `class` or `initialClass` — never evaluated as a regex or code.
 
-- Omarchy 4.0.2
-- Quickshell 0.3.1
-- Hyprland 0.56.2
+1. If a matching client already exists **on the target workspace**, the entry is
+   considered present, without launching another copy.
+2. If matching clients exist only elsewhere, activation stops and reports their
+   workspace location. It does not move, focus or duplicate them.
+3. Otherwise launch, then wait for a new matching client on the target workspace.
+   Unrelated classes cannot confirm success.
 
-There are no extra package dependencies beyond a current Omarchy install. The
-plugin uses tools Omarchy already provides or depends on: Bash, `jq`, `flock`, `luac`,
-`hyprctl`, `omarchy-launch-terminal`, `omarchy-launch-webapp`, and
-`omarchy-notification-send`. Applications and commands saved in your presets
-are, naturally, your responsibility.
+Use an application-specific class, not a generic browser or terminal class, when
+multiple windows must remain distinct. An overly broad `matchClass` can consider
+the wrong same-class window present. It does not validate a page, URL, document,
+remote host or application's health. A matching terminal does not prove its child
+command succeeded.
 
-## Install
+Entries without `matchClass` remain compatible: each entry is launched separately,
+including identical command strings, and waits for one new client address on its
+target workspace. Multiple simultaneous arrivals fail as ambiguous. A single
+unrelated arrival on that workspace can still satisfy this **best-effort
+observation**, so it is not reliable attribution, ownership or universal dedup.
+Reactivating unmatched entries generally adds more windows. Applications that
+reuse/focus existing windows may time out; configure an exact class when suitable.
 
-```bash
-omarchy plugin add https://github.com/Kyotroo/omarchy-workspace-profiles.git
-omarchy plugin enable kdm.presets --section left --after omarchy.workspaces
+## Use and customization
+
+Requirements: an Omarchy shell with `qs.Ui` and `Commons.ShellIpc` (tested against
+the locally installed Omarchy 4.5.0rc1 / Quickshell 0.3.2 APIs), Lua-enabled
+Hyprland with `hl.dsp.exec_cmd`, Python 3, Bash and `hyprctl`. No packages are
+installed by this repository.
+
+After a separately reviewed installation, the bar icon opens a panel with Presets
+and Profiles tabs. Click a preset to launch on the **currently active global
+workspace** (captured once at activation); click a profile to launch on its saved
+workspace numbers. Global workspace IDs are not per-monitor displayed slot
+numbers; monitor affinity remains the compositor's responsibility.
+
+**Edit JSON** opens a plain-text configuration editor. This deliberately replaces
+the upstream multi-step editor, webapp discovery, name fields and risky onboarding
+flow with one small, auditable customization boundary. Add/edit/delete/reorder
+presets, windows, profiles and shortcut slots in this document; **Validate & save**
+checks the full model before committing. Invalid drafts remain in the editor.
+Names are case-insensitively unique; profile preset references, duplicate workspace
+numbers and slots are checked before saving. Renaming an item requires updating
+its references in the same document. Return inside the JSON editor inserts a
+newline; it does not launch the selected profile. Launch buttons support Tab and
+Return/Enter through Omarchy's button control.
+
+Example document (generic placeholders; replace commands and workspace numbers):
+
+```json
+{
+  "version": 1,
+  "presets": [
+    {
+      "name": "Notes",
+      "windows": [
+        {
+          "type": "custom",
+          "value": "foot --app-id=workspace-notes",
+          "label": "Notes terminal",
+          "matchClass": "workspace-notes"
+        },
+        {
+          "type": "terminal",
+          "value": "printf 'hello';"
+        }
+      ]
+    }
+  ],
+  "profiles": [
+    {
+      "name": "Reading",
+      "default": false,
+      "closeMode": "keepExisting",
+      "workspaces": [{"workspace": 2, "preset": "Notes"}]
+    }
+  ],
+  "shortcuts": [{"family": "profile", "slot": 1, "name": "Reading"}]
+}
 ```
 
-The second command places Presets in the left side of the bar, immediately
-after Workspaces. Open it by clicking the bar icon.
+Window types:
 
-![Enabling the plugin and completing its one-question shortcut setup](docs/install-clip.gif)
+- `custom`: Bash command, preserved as written.
+- `terminal`: `omarchy-launch-terminal` runs the command in a **child** Bash,
+  then the outer Bash displays its exit code and waits for Enter. Trailing `;`,
+  `&`, comments, quotes, newlines, `exit` and `exec` do not consume the hold logic.
+- `webapp`: `omarchy-launch-webapp` receives the value as one quoted argument.
+  This launches a URL; it does not inspect/install desktop files.
 
-### First run and configuration consent
+Use **Reload state** to discover manual/external edits. Do not discard a draft
+without copying it somewhere if needed. The editor does not automatically merge
+concurrent drafts. A stale draft is rejected rather than overwriting another
+monitor's accepted edit. Individual commands/labels can be inspected directly in
+JSON; there are no hidden bundled launch commands.
 
-On first open, Presets asks whether it may add its quick-launch bindings to
-`~/.config/hypr/bindings.lua`. Accepting appends one clearly marked block. It
-first makes a temporary backup, checks the result with `luac`, reloads
-Hyprland, and restores the original file if either validation step fails.
-Declining leaves the file untouched.
+### Manual IPC integration
 
-The post-boot hook is separate: it is installed only when you explicitly mark
-a profile as the default. Its path is:
+No bindings are installed. If you separately choose to configure shortcuts, the
+explicit IPC calls are:
+
+```sh
+omarchy-shell abhinav.workspace-profiles toggle
+omarchy-shell abhinav.workspace-profiles activateProfile 'Reading'
+omarchy-shell abhinav.workspace-profiles activatePreset 'Notes'
+omarchy-shell abhinav.workspace-profiles activatePresetOn 'Notes' 2
+omarchy-shell abhinav.workspace-profiles activatePresetSlot 1
+omarchy-shell abhinav.workspace-profiles activateProfileSlot 1
+omarchy-shell abhinav.workspace-profiles status
+```
+
+Slots are independent 1–9 preset/profile namespaces stored in JSON; assigning one
+does not create a keybinding. `ok` means the request was accepted asynchronously,
+not that every app is ready. Errors/progress appear in the panel; `status` exposes
+readiness, busy flags and the last error. Panel IPC uses the most recently opened
+surviving view, or the last registered monitor view if none was opened; it does
+not promise pointer-monitor routing. Loading the singleton requires an enabled
+bar widget. No `activateDefaultProfile` endpoint exists.
+
+## Storage, migration and recovery
+
+State is identity-isolated under:
 
 ```text
-~/.config/omarchy/hooks/post-boot.d/kdm-presets-activate-default-profile.sh
+${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/abhinav.workspace-profiles/
+  state.json                  # canonical version-1 document
+  state.lock                  # cross-process save lock
+  activation.lock             # cross-process preset/profile coordinator lock
+  activation-progress.json    # latest progress; not ownership
 ```
 
-## Quick start
+If `state.json` does not exist, the loader accepts legacy `presets.json`,
+`profiles.json`, and `shortcuts.json` arrays **in this new identity's directory**;
+missing files mean empty arrays. The first successful explicit save writes one
+canonical document atomically. Legacy input files remain untouched, but are no
+longer consulted once `state.json` exists. Unknown metadata fields are generally
+preserved, except the forced safety flags. Documents are bounded to 2 MiB and
+1000 entries per collection/window/workspace list; window value/name strings have
+additional schema limits. Ordinary JSON compatibility is prioritized, not an
+unversioned arbitrary-object format.
 
-1. Open Presets and choose **New preset** (`n`).
-2. After saving the name, the new preset opens directly in its editor. Choose
-   **Add window** (`a`) and add any combination of:
-   - **Terminal** — a command opened in a terminal, such as `btop`.
-   - **Web app** — an installed Omarchy web app or a custom URL such as
-     `https://omarchy.org`.
-   - **Custom** — any shell command, run as your user.
-3. Reorder entries with `Shift+J` / `Shift+K`; this controls their
-   left-to-right order.
-4. Press `Enter` on the preset to launch it.
+There is no automatic import from upstream's state directory. To migrate, back up
+and review the JSON first, then explicitly copy the reviewed arrays to the new
+identity's state directory before its first save. **Do not copy ownership files,
+boot hooks or onboarding results.** Old copied hooks/bindings in your user config
+are not removed or modified by this fork. If you used upstream, separately inspect
+and disable its old plugin/hooks/shortcuts with your own approval; this fork does
+not register or respond to upstream's IPC identity. The old hook filename retained
+in this checkout is an inert error-only migration entrypoint, not an installer.
 
-![Building and reordering a preset, then assigning a shortcut](docs/setting-up-presets.gif)
+Corrupt, inaccessible, oversized or schema-invalid state is not treated as empty:
+load fails visibly and disables editing/launching, preserving the last good model
+and the original file. Repair/restore the file manually from a backup and Reload.
+Save revalidates current disk contents and compares a SHA-256 revision under a
+file lock before replacing `state.json`. External changes reject stale saves and
+stale launch requests. Save payloads travel over stdin, not shell interpolation or
+large argv strings. No automatic backup history, conflict merging or recovery
+export UI is provided. Atomic replacement protects from partial writes; it is not
+a substitute for backups or a transaction against arbitrary non-cooperating
+external editors.
 
-### Preset controls
+## Architecture
 
-| Key | Action |
-| --- | --- |
-| `↑` / `↓` or `j` / `k` | Move selection |
-| `Enter` / `Space` | Launch selected preset |
-| `→` / `l` | Edit selected preset |
-| `n` | Create preset |
-| `a` | Add a window while editing |
-| `Shift+J` / `Shift+K` | Move a window later / earlier |
-| `s` | Assign a preset shortcut slot |
-| `x` | Delete selected preset or window |
-| `[` / `]` | Switch between Presets and Profiles |
-| `Esc` | Go back or close the panel |
+- `Presets.qml`: per-monitor view, tab/editor draft state and canonical-index
+  delegate callbacks. No data workers, save queues or active IPC handlers in
+  views (`Panel.manageIpc` is false).
+- `internal/Controller.qml` + `internal/qmldir`: a **proper QML singleton** shared
+  by all views imported from this installed plugin URL in the shell's QML engine.
+  Owns the data/revision, FIFO save queue, tracked Process objects, activation guard,
+  progress and one registered `Commons.ShellIpc` handler. Monitor destruction does
+  not destroy the controller or its workers.
+- `scripts/state_model.py`: validation, safe legacy normalization and snapshot
+  fingerprints. One canonical JSON document avoids cross-file partial saves.
+- `scripts/workspace_profiles.py`: atomic CAS saves and a common launch-only
+  coordinator for both families. Builds shell commands at one boundary, applies
+  explicit workspace rules, observes new windows, reports failures. Stores no
+  ownership; never closes anything.
+- `scripts/activate-profile.sh`: compatible old launch-plan entrypoint backed by
+  the same coordinator. Legacy close modes have no effect.
+- `scripts/write-json.sh` and the old hook path: inert, nonzero, explanatory exits.
 
-Terminal and Custom entries can have an optional display title. Installed web
-apps use the title from their desktop entry automatically.
+Customization should change data first, view/theme second, and controller/backend
+only for behavior changes. Identity-derived state and IPC do not share upstream's
+paths. Backend lock/revision checks defend against separate shell processes; do
+not install multiple different plugin copies with the same identity and expect
+independent IPC namespaces.
 
-Preset names must be unique, ignoring surrounding spaces and letter case. The
-same rule applies separately to profile names. A duplicate stays in the naming
-form with an inline message, so shortcuts and profile references always resolve
-to one item.
+## Tests (isolated, no live desktop access)
 
-## Profiles
-
-A profile maps workspace numbers to presets. For example, workspace 2 can open
-a Reading preset while workspace 3 opens an Evening preset. Create a profile
-from the **Profiles** tab, add each workspace/preset pair, then choose what
-happens to windows already on those workspaces.
-
-![Creating a two-workspace profile and assigning a shortcut](docs/setting-up-profile.gif)
-
-| Close mode | Behavior |
-| --- | --- |
-| **Close ours only** | Closes this profile's tracked windows only if their process/session identity and current workspace still match. This is the default. |
-| **Close all on workspace** | Closes every window on each target workspace. |
-| **Keep existing** | Leaves all existing windows and adds the new ones. |
-
-Only one profile can activate at a time, including shortcut and IPC requests.
-A second request returns `busy`. The entire profile is checked before any
-workspace changes: missing presets, invalid entries, and repeated workspace
-numbers stop activation. A preset referenced by a profile cannot be deleted
-until that reference is removed.
-
-Closing uses a window-specific request, never process termination. If an
-application keeps a window open (for example, for a save dialog), activation
-stops with an error. Resolve the dialog before retrying. Workspace-switch and
-window-launch timeouts also stop activation and preserve tracking for windows
-already opened.
-
-Ownership is retained across profile switches and scoped to the current
-Hyprland session. On upgrade, legacy tracking records lack enough identity
-information to close safely, so existing windows are left alone. New launches
-write the stronger records. Launch detection still observes newly appearing
-windows: avoid manually opening other windows during activation, since a
-single unrelated arrival can be mistaken for the requested application.
-
-Activating a profile shows pending/running/done/failed progress. Press `d` in a profile's
-edit view to make it the login default. Only one profile can be default at a
-time; that explicit action also installs the plugin-specific post-boot hook.
-If you ever need to reinstall the hook manually, run:
-
-```bash
-omarchy hook install post-boot ~/.config/omarchy/plugins/kdm.presets/hooks/kdm-presets-activate-default-profile.sh
+```sh
+bash tests/run.sh
 ```
 
-## Keyboard shortcuts
+The runner always enters Bubblewrap: read-only `/`, only this checkout writable,
+private `/run`, `/tmp`, HOME/XDG paths, private PID/network namespaces, fresh
+`/dev`, no compositor/display/session-bus environment. Helpers see only an explicit
+fake `hyprctl`; test commands do not launch real applications. Dependencies:
+`bwrap`, Python 3, Node.js, installed Omarchy/Quickshell/Qt tooling.
 
-After accepting first-run shortcut setup, assign numbered slots with `s` or
-the keyboard button on a row:
+Execution tests cover immutable legacy close safety, exact-class present/elsewhere
+matching, explicit targets, duplicate commands, ambiguous arrivals, timeouts and
+stop-on-failure, unified process locks, terminal grammar, corruption preservation,
+reference/slot/name validation, atomic saves and concurrent stale writers. Real
+headless Quickshell loads two views, exercises the actual Process save queue,
+150-kB stdin payload, stale queued drafts, fresh independent edits, canonical row
+clicks, registry IPC, both activation guards and monitor create/destroy lifecycle.
+A second smoke run checks corrupt-state UI blocking. Both require success markers
+**and no QML scene/type/binding/QColor diagnostics**. Only KeyboardPanel's display
+surface is stubbed; installed controls and backend processes remain real.
 
-- `SUPER + CTRL + SHIFT + 1` through `9` launch preset slots.
-- `SUPER + CTRL + ALT + 1` through `9` launch profile slots and open the live
-  progress panel.
+This does **not** certify native Wayland popup geometry, monitor placement, actual
+application mapping, Chromium handoff, SSH session health or real desktop behavior.
+Those require a separately authorized post-install check. See `tests/README.md`
+for the TDD changes and coverage migration.
 
-If you declined onboarding, add this block to
-`~/.config/hypr/bindings.lua` manually:
+## Attribution
 
-```lua
--- kdm.presets quick-launch shortcut slots
-for slot = 1, 9 do
-  o.bind("SUPER + CTRL + SHIFT + code:" .. tostring(slot + 9), "Preset slot " .. slot,
-    "omarchy-shell kdm.presets activatePresetSlot " .. slot)
-  o.bind("SUPER + CTRL + ALT + code:" .. tostring(slot + 9), "Profile slot " .. slot,
-    "omarchy-shell kdm.presets activateProfileSlot " .. slot)
-end
-```
-
-The physical key codes are intentional: shifted number keys produce different
-characters on many keyboard layouts.
-
-To open or close the panel with `SUPER + SHIFT + Q`, add this optional binding
-to `~/.config/hypr/bindings.lua`:
-
-```lua
-o.bind("SUPER + SHIFT + Q", "Presets", "omarchy-shell shell toggle kdm.presets")
-```
-
-## Data, commands, and permissions
-
-Presets runs entirely as your user and makes no network requests of its own.
-Web apps and custom commands you configure may use the network.
-
-Its own state lives under `~/.local/state/omarchy/kdm-presets/`:
-
-| File | Purpose |
-| --- | --- |
-| `presets.json` | Preset names and ordered window definitions |
-| `profiles.json` | Profile workspace mappings, close modes, and default flag |
-| `shortcuts.json` | Numbered shortcut assignments |
-| `active-profile.json` | Versioned window ownership records across profiles, including process/session identity |
-| `activation-progress.json` | Current profile-launch progress |
-| `activation.lock` | Advisory lock held only while a profile activation runs |
-| `onboarding.json` / `onboarding-result.json` | First-run status |
-
-Preset, profile, and shortcut saves run through a single queue. Rapid edits
-coalesce to the latest snapshot, and older disk notifications cannot overwrite
-unsaved edits. Each write uses a unique sibling temporary file and an atomic
-rename. Failed saves remain in memory with a **Retry saving** action; keep the
-shell running until retry succeeds to preserve those unsaved changes.
-
-The plugin may also make these user-approved configuration changes:
-
-- append the marked shortcut block to `~/.config/hypr/bindings.lua` after the
-  onboarding prompt is accepted;
-- install its named post-boot hook after a profile is explicitly made default;
-- set target workspaces to Hyprland's scrolling layout when launching;
-- close windows according to the profile close mode you selected.
-
-Custom entries are shell commands. Only save commands you trust.
-
-### Example formats
-
-`presets.json`:
-
-```json
-[
-  {
-    "name": "Evening",
-    "windows": [
-      { "type": "terminal", "value": "cal", "label": "Calendar" },
-      { "type": "webapp", "value": "https://omarchy.org", "label": "Omarchy" }
-    ]
-  }
-]
-```
-
-`profiles.json`:
-
-```json
-[
-  {
-    "name": "Daily Setup",
-    "default": false,
-    "closeMode": "trackedOnly",
-    "workspaces": [
-      { "workspace": 2, "preset": "Reading" },
-      { "workspace": 3, "preset": "Evening" }
-    ]
-  }
-]
-```
-
-## Remove
-
-Disable the widget, remove its post-boot hook, then remove the plugin:
-
-```bash
-omarchy plugin disable kdm.presets
-rm -f -- ~/.config/omarchy/hooks/post-boot.d/kdm-presets-activate-default-profile.sh
-omarchy plugin remove kdm.presets --yes
-```
-
-If you accepted shortcut setup, also delete the marked `kdm.presets
-quick-launch shortcut slots` block from `~/.config/hypr/bindings.lua`, then run
-`hyprctl reload`.
-
-Plugin state is deliberately preserved when the plugin is removed. Delete it
-only if you do not want to reinstall or keep your presets:
-
-```bash
-rm -rf -- ~/.local/state/omarchy/kdm-presets
-```
-
-## Development checks
-
-Run the regression suite with Node.js 22+ and the normal Bash/`jq`/`flock`
-tools:
-
-```bash
-node --test tests/safety.test.cjs
-bash -n scripts/activate-profile.sh scripts/write-json.sh
-```
-
-Tests execute the QML functions and real shell helpers with a fake compositor
-and temporary state. They do not launch or close real application windows.
-On an Omarchy machine, an additional runtime check uses actual Quickshell
-FileViews and Processes, with only the display surface stubbed:
-
-```bash
-node tests/qml-smoke.cjs
-```
-
-## License
-
-[MIT](LICENSE) © kdm
+Fork of kdm's MIT-licensed Presets plugin. Original license retained. Legacy media
+in `docs/` and `preview.png` is upstream artwork, not evidence of this fork's UI.

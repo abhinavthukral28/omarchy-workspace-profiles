@@ -1,9 +1,4 @@
 #!/bin/bash
-set -euo pipefail
-destination=$1
-json=$2
-mkdir -p "$(dirname "$destination")"
-tmp=$(mktemp "$destination.XXXXXX")
-trap 'rm -f -- "$tmp"' EXIT
-printf '%s' "$json" > "$tmp"
-mv -- "$tmp" "$destination"
+# Unvalidated arbitrary-path writes are retired; use the validated CAS backend.
+printf '%s\n' 'Unrestricted JSON writer retired; use workspace_profiles.py save.' >&2
+exit 64
